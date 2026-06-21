@@ -224,6 +224,11 @@ st.subheader("📊 Model Evaluation on Test Set")
 # Debug/diagnostics are disabled by default (keep UI clean).
 show_debug = False
 
+# Close-only calibration to improve directional metrics.
+# This is deterministic post-processing (train-only threshold tuning + variance scaling)
+# and does not change the model weights.
+enable_close_calibration = True
+
 # Used for converting log-return error into approximate dollar error.
 last_open_price = float(ctx["raw_ohlcv"][-1, OPEN_IDX])
 last_close_price = float(ctx["raw_ohlcv"][-1, CLOSE_IDX])
@@ -346,16 +351,8 @@ if show_debug:
             y_pred_both_cal = y_pred_both.copy()
             y_pred_both_cal[:, 1] = (y_pred_test_close_real_cal - mean_close) / std_close
 
-# ── Direction threshold tuning (train) for Close ──
-if show_debug:
-    # Default boundary is 0 (sign of log-return). If predictions are biased/
-    # under-dispersed, the best decision threshold may not be exactly 0.
-    use_close_direction_threshold = st.checkbox(
-        "Tune Close direction threshold on train",
-        value=False,
-    )
-
-    if use_close_direction_threshold:
+    # ── Direction threshold tuning (train) for Close ──
+    if enable_close_calibration:
         # Predict on train for threshold selection.
         pred_train_out = model.predict(ctx["X_train"], verbose=0)
         if isinstance(pred_train_out, (list, tuple)):
@@ -383,39 +380,21 @@ if show_debug:
                 best_acc = acc
                 best_t = float(t)
 
-        st.write(
-            f"Close direction threshold (train): t={best_t:.8f}, acc={best_acc:.4f}"
-        )
-
         # Convert subtracting threshold in real space to scaled-space adjustment:
         # scaled = (real - mean) / std  => scaled_adj = scaled - t/std
         scale_std_close = float(ctx["scaler"].scale_[CLOSE_IDX])
         y_pred_both_cal = y_pred_both_cal.copy()
         y_pred_both_cal[:, 1] = y_pred_both_cal[:, 1] - (best_t / scale_std_close)
 
-# ── Fix 4: variance scaling sanity check (post-processing only) ──
-if show_debug:
-    use_fix4_variance_scaling = st.checkbox(
-        "Enable Fix 4 variance scaling (Close)",
-        value=False,
-    )
-
-    if use_fix4_variance_scaling:
-        with st.expander("Fix 4: variance scaling (Close)", expanded=False):
-            train_std_close = float(np.std(ctx["y_train"][:, 1]))
-            pred_std_close = float(np.std(y_pred_both_cal[:, 1]))
-            st.write(f"train std (scaled) Close: {train_std_close:.6f}")
-            st.write(f"pred std (scaled) Close: {pred_std_close:.6f}")
-            if pred_std_close > 0:
-                scale_close = train_std_close / pred_std_close
-                # Clamp to avoid exploding outputs if something goes wrong.
-                scale_close = float(np.clip(scale_close, 0.2, 5.0))
-                st.write(
-                    f"Applied scale factor to Close (scaled units): {scale_close:.6f}"
-                )
-                y_pred_both_cal[:, 1] = y_pred_both_cal[:, 1] * scale_close
-            else:
-                st.write("Pred std is zero; skipping Fix 4 scaling.")
+    # ── Fix 4: variance scaling sanity check (post-processing only) ──
+    if enable_close_calibration:
+        train_std_close = float(np.std(ctx["y_train"][:, 1]))
+        pred_std_close = float(np.std(y_pred_both_cal[:, 1]))
+        if pred_std_close > 0:
+            scale_close = train_std_close / pred_std_close
+            # Clamp to avoid exploding outputs if something goes wrong.
+            scale_close = float(np.clip(scale_close, 0.2, 5.0))
+            y_pred_both_cal[:, 1] = y_pred_both_cal[:, 1] * scale_close
 
 # (removed) automatic variance scaling for Close
 
