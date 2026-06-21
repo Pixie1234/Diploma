@@ -512,7 +512,7 @@ with col2:
 
     if m_close["Directional Accuracy"] > 0.60:
         st.success(f"✓ {m_close['Directional Accuracy']:.2%} — beats 60% target")
-    elif m_close["Directional Accuracy"] > 0.52:
+    elif m_close["Directional Accuracy"] > 0.50:
         st.warning(f"⚠ {m_close['Directional Accuracy']:.2%} — beats random")
     else:
         st.error(f"✗ {m_close['Directional Accuracy']:.2%} — at or below random")
