@@ -777,17 +777,22 @@ with col2:
     else:
         st.warning(f"⚠ {sig_close['conclusion']}")
 
-# ── Feature Set Summary ─────────────────────────────────────
-st.subheader("📊 Open Prediction — Feature Set Summary")
+# ── Ablation Study ────────────────────────────────────────────
+st.subheader("🔬 Ablation Study")
 st.caption(
-    "Directional accuracy and MAE for the current Open model configuration."
+    "Shows contribution of each component. "
+    "This table belongs directly in your thesis results chapter."
 )
 st.info(
-    "This summary reflects the current run using the full feature set "
-    "(OHLCV + RSI + MACD + BB)."
+    "Run the model with different feature sets to fill this table. "
+    "Current run uses full feature set (OHLCV + RSI + MACD + BB)."
 )
 
 ablation_data = {
+    "LSTM — OHLC only (baseline)": {"direction": 0.4959, "mae": 0.796519},
+    "LSTM — OHLCV (+ Volume)": {"direction": 0.00, "mae": 0.00},
+    "LSTM — OHLCV + RSI": {"direction": 0.00, "mae": 0.00},
+    "LSTM — OHLCV + RSI + MACD": {"direction": 0.00, "mae": 0.00},
     "LSTM — OHLCV + RSI + MACD + BB (full)": {
         "direction": m_close["Directional Accuracy"],
         "mae": m_close["MAE"],
@@ -802,26 +807,37 @@ st.caption(
 # ── Prediction Visualization ──────────────────────────────────
 st.subheader("📈 Prediction Quality — Test Set")
 
-fig, axes = plt.subplots(1, 2, figsize=(14, 4))
+fig, axes = plt.subplots(2, 2, figsize=(14, 8))
 
 # Open: actual vs predicted
-axes[0].plot(yt_open[:100], label="Actual", alpha=0.8)
-axes[0].plot(yp_open[:100], label="Predicted", alpha=0.8)
-axes[0].axhline(0, color="black", linestyle="--", alpha=0.3)
-axes[0].set_title("Open Log Returns — Actual vs Predicted")
-axes[0].legend()
-axes[0].grid(True, alpha=0.3)
+axes[0, 0].plot(yt_open[:100], label="Actual", alpha=0.8)
+axes[0, 0].plot(yp_open[:100], label="Predicted", alpha=0.8)
+axes[0, 0].axhline(0, color="black", linestyle="--", alpha=0.3)
+axes[0, 0].set_title("Open Log Returns — Actual vs Predicted")
+axes[0, 0].legend()
+axes[0, 0].grid(True, alpha=0.3)
+
+# Close: actual vs predicted
+axes[0, 1].plot(yt_close[:100], label="Actual", alpha=0.8)
+axes[0, 1].plot(yp_close[:100], label="Predicted", alpha=0.8)
+axes[0, 1].axhline(0, color="black", linestyle="--", alpha=0.3)
+axes[0, 1].set_title("Close Log Returns — Actual vs Predicted")
+axes[0, 1].legend()
+axes[0, 1].grid(True, alpha=0.3)
 
 # Cumulative Open
-axes[1].plot(np.cumsum(yt_open), label="Actual Cumulative", lw=2)
-axes[1].plot(
-    np.cumsum(yp_open),
-    label="Predicted Cumulative",
-    lw=2,
-)
-axes[1].set_title("Cumulative Open Returns")
-axes[1].legend()
-axes[1].grid(True, alpha=0.3)
+axes[1, 0].plot(np.cumsum(yt_open), label="Actual Cumulative", lw=2)
+axes[1, 0].plot(np.cumsum(yp_open), label="Predicted Cumulative", lw=2)
+axes[1, 0].set_title("Cumulative Open Returns")
+axes[1, 0].legend()
+axes[1, 0].grid(True, alpha=0.3)
+
+# Cumulative Close
+axes[1, 1].plot(np.cumsum(yt_close), label="Actual Cumulative", lw=2)
+axes[1, 1].plot(np.cumsum(yp_close), label="Predicted Cumulative", lw=2)
+axes[1, 1].set_title("Cumulative Close Returns")
+axes[1, 1].legend()
+axes[1, 1].grid(True, alpha=0.3)
 
 plt.suptitle(f"{symbol} — LSTM+Indicators Prediction Quality", fontsize=13)
 plt.tight_layout()
@@ -880,44 +896,39 @@ st.dataframe(forecast_df, use_container_width=True)
 
 # Forecast chart
 fig_fc, ax = plt.subplots(figsize=(13, 5))
-
-forecast_start_date = future_dates[0] if len(future_dates) > 0 else last_real_day
-
-# Extend historical series to the first forecasted x-value so the line reaches
-# the red forecast-start marker without an x-axis gap.
-hist_x = data.index[-90:]
-hist_y = data["Open"].values[-90:]
-
-hist_x_ext = hist_x.append(pd.DatetimeIndex([forecast_start_date]))
-boundary_open = (
-    forecast["open_prices"][0]
-    if len(forecast.get("open_prices", [])) > 0
-    else hist_y[-1]
-)
-hist_y_ext = np.concatenate([hist_y, [boundary_open]])
-
 ax.plot(
-    hist_x_ext, hist_y_ext,
-    label="Historical Open", color="steelblue", lw=2
+    data.index[-90:], data["Close"].values[-90:],
+    label="Historical Close", color="steelblue", lw=2
 )
 ax.plot(
     future_dates, forecast["open_prices"],
-    label="LSTM + Indicators Predicted Open", color="orange",
+    label="Predicted Open", color="orange",
     marker="^", lw=2, linestyle="--"
+)
+ax.plot(
+    future_dates, forecast["close_prices"],
+    label="Predicted Close", color="green",
+    marker="o", lw=2
 )
 
 if informer_forecast is not None:
     ax.plot(
-        future_dates, informer_forecast["open_prices"],
-        label="Informer Predicted Open", color="teal",
-        marker="^", lw=2, linestyle=":", alpha=0.9
+        future_dates, informer_forecast["close_prices"],
+        label="Informer Predicted Close", color="purple",
+        marker="x", lw=2, linestyle=":"
     )
+ax.fill_between(
+    future_dates,
+    forecast["open_prices"],
+    forecast["close_prices"],
+    alpha=0.15, color="gray", label="Open-Close range"
+)
 ax.axvline(
-    x=forecast_start_date, color="red",
+    x=last_real_day, color="red",
     linestyle="--", alpha=0.5, label="Forecast start"
 )
 ax.set_title(
-    f"{symbol} — Open Price Forecast"
+    f"{symbol} — AI Base Forecast (Open & Close)"
 )
 ax.set_xlabel("Date")
 ax.set_ylabel("Price ($)")
