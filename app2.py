@@ -66,8 +66,32 @@ except Exception:
 
 st.title("Fused Market Predictor")
 st.caption(
-    "LSTM + FinBERT + RoBERTa | Features: OHLCV + RSI + MACD + Bollinger | Predicts: Open & Close"
+    "LSTM + FinBERT + RoBERTa | Features: OHLCV + RSI + MACD + Bollinger | Predicts: Open"
 )
+
+
+def _allow_model_training() -> bool:
+    override = os.environ.get("ALLOW_MODEL_TRAINING", "").strip().lower()
+    if override in {"1", "true", "yes"}:
+        return True
+    if override in {"0", "false", "no"}:
+        return False
+
+    runtime_env = os.environ.get("STREAMLIT_RUNTIME_ENV", "").strip().lower()
+    server_headless = os.environ.get("STREAMLIT_SERVER_HEADLESS", "").strip().lower()
+    if runtime_env == "cloud" or server_headless == "true":
+        return False
+    return True
+
+
+ALLOW_MODEL_TRAINING = _allow_model_training()
+
+
+def _resolve_model_path(symbol: str, candidates: list[str]) -> str:
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return candidates[0]
 
 # Ensure news text wraps even if a source summary contains long
 # unbroken tokens (e.g. missing spaces around numbers/words).
@@ -117,9 +141,21 @@ days_to_predict = st.sidebar.number_input(
 
 model_mode = "LSTM vs Informer (Close)"
 
-# New model version to avoid loading incompatible architectures.
-model_path = f"models/{symbol}_lstm_ohlcv_indicators_v17.h5"
-informer_model_path = f"models/{symbol}_informer_ohlcv_indicators_v2.pt"
+# Prefer the newest on-disk artifact, but keep older versions as fallback.
+model_path = _resolve_model_path(
+    symbol,
+    [
+        f"models/{symbol}_lstm_ohlcv_indicators_v17.h5",
+        f"models/{symbol}_lstm_ohlcv_indicators_v10.h5",
+        f"models/{symbol}_lstm_ohlcv_indicators_v4.h5",
+    ],
+)
+informer_model_path = _resolve_model_path(
+    symbol,
+    [
+        f"models/{symbol}_informer_ohlcv_indicators_v2.pt",
+    ],
+)
 informer_model = None
 
 # ============================================================
@@ -171,13 +207,17 @@ def get_model(symbol, path, n_features: int, data_version: str):
         path,
     )
 
-with st.spinner("Loading model..."):
-    model, was_loaded = get_model(
-        symbol,
-        model_path,
-        N_FEATURES,
-        data_version=f"features_v4_target_intraday",
-    )
+try:
+    with st.spinner("Loading model..."):
+        model, was_loaded = get_model(
+            symbol,
+            model_path,
+            N_FEATURES,
+            data_version=f"features_v4_target_intraday",
+        )
+except Exception as exc:
+    st.error(f"Unable to load the LSTM model: {exc}")
+    st.stop()
 
 @st.cache_resource
 def get_informer(symbol, path, data_version: str):
@@ -194,17 +234,21 @@ def get_informer(symbol, path, data_version: str):
         path,
     )
 
-with st.spinner("Loading Informer model..."):
-    informer_out = get_informer(
-        symbol,
-        informer_model_path,
-        data_version=f"features_v4_target_intraday",
-    )
-    informer_model, informer_was_loaded = informer_out
+try:
+    with st.spinner("Loading Informer model..."):
+        informer_out = get_informer(
+            symbol,
+            informer_model_path,
+            data_version=f"features_v4_target_intraday",
+        )
+        informer_model, informer_was_loaded = informer_out
+except Exception as exc:
+    st.error(f"Unable to load the Informer model: {exc}")
+    st.stop()
 
 model_status = "Loaded saved model" if was_loaded else "Model trained"
 st.success(
-    f"✓ {model_status} | Input: {N_FEATURES} features | Output: {N_OUTPUTS} (Open + Close)"
+    f"✓ {model_status} | Input: {N_FEATURES} features | Output: 1 (Open only)"
 )
 
 DECAY_RATE = 10.0
@@ -223,11 +267,6 @@ st.subheader("📊 Model Evaluation on Test Set")
 
 # Debug/diagnostics are disabled by default (keep UI clean).
 show_debug = False
-
-# Close-only calibration to improve directional metrics.
-# This is deterministic post-processing (train-only threshold tuning + variance scaling)
-# and does not change the model weights.
-enable_close_calibration = True
 
 # Used for converting log-return error into approximate dollar error.
 last_open_price = float(ctx["raw_ohlcv"][-1, OPEN_IDX])
@@ -305,96 +344,90 @@ else:
 
 # Optional post-processing calibration.
 y_pred_both_cal = y_pred_both
-if show_debug:
-    use_close_calibration = st.checkbox(
-        "Enable Close calibration (post-processing)",
-        value=False,
+
+# Always apply Close post-processing so Close directional metrics are not near-random.
+# (No UI/debug switches: deterministic post-processing only.)
+enable_close_calibration = True
+
+if enable_close_calibration:
+    # Gentle variance-only inflation based on train-set real log-return std.
+    pred_train_out = model.predict(ctx["X_train"], verbose=0)
+    if isinstance(pred_train_out, (list, tuple)):
+        y_pred_train_both = np.hstack([pred_train_out[0], pred_train_out[1]])
+    else:
+        y_pred_train_both = pred_train_out
+
+    y_true_train_close_real = inverse_transform_col(
+        ctx["y_train"][:, 1], CLOSE_IDX, ctx["scaler"]
+    )
+    y_pred_train_close_real = inverse_transform_col(
+        y_pred_train_both[:, 1], CLOSE_IDX, ctx["scaler"]
     )
 
-    if use_close_calibration:
-        # Gentle variance-only inflation based on train-set real log-return std.
-        with st.expander("Calibration: gentle std-only (train)"):
-            pred_train_out = model.predict(ctx["X_train"], verbose=0)
-            if isinstance(pred_train_out, (list, tuple)):
-                y_pred_train_both = np.hstack([pred_train_out[0], pred_train_out[1]])
-            else:
-                y_pred_train_both = pred_train_out
-            y_true_train_close_real = inverse_transform_col(
-                ctx["y_train"][:, 1], CLOSE_IDX, ctx["scaler"]
-            )
-            y_pred_train_close_real = inverse_transform_col(
-                y_pred_train_both[:, 1], CLOSE_IDX, ctx["scaler"]
-            )
+    true_std = float(np.std(y_true_train_close_real))
+    pred_std = float(np.std(y_pred_train_close_real))
 
-            true_std = float(np.std(y_true_train_close_real))
-            pred_std = float(np.std(y_pred_train_close_real))
+    beta = 0.5
+    max_r = 2.0
+    if pred_std > 0:
+        r = (true_std / pred_std) ** beta
+        r = float(np.clip(r, 0.0, max_r))
+    else:
+        r = 1.0
 
-            beta = 0.5
-            max_r = 2.0
-            if pred_std > 0:
-                r = (true_std / pred_std) ** beta
-                r = float(np.clip(r, 0.0, max_r))
-            else:
-                r = 1.0
+    y_pred_test_close_real = inverse_transform_col(
+        y_pred_both[:, 1], CLOSE_IDX, ctx["scaler"]
+    )
+    y_pred_test_close_real_cal = y_pred_test_close_real * r
 
-            y_pred_test_close_real = inverse_transform_col(
-                y_pred_both[:, 1], CLOSE_IDX, ctx["scaler"]
-            )
-            y_pred_test_close_real_cal = y_pred_test_close_real * r
+    mean_close = float(ctx["scaler"].mean_[CLOSE_IDX])
+    std_close = float(ctx["scaler"].scale_[CLOSE_IDX])
+    y_pred_both_cal = y_pred_both.copy()
+    y_pred_both_cal[:, 1] = (y_pred_test_close_real_cal - mean_close) / std_close
 
-            st.write(
-                f"Train true std={true_std:.6f}, pred std={pred_std:.6f}, r={r:.4f}"
-            )
+# ── Direction threshold tuning (train) for Close ──
+if enable_close_calibration:
+    # Default boundary is 0 (sign of log-return). If predictions are biased/
+    # under-dispersed, the best decision threshold may not be exactly 0.
+    pred_train_out = model.predict(ctx["X_train"], verbose=0)
+    if isinstance(pred_train_out, (list, tuple)):
+        y_pred_train_both = np.hstack([pred_train_out[0], pred_train_out[1]])
+    else:
+        y_pred_train_both = pred_train_out
 
-            mean_close = float(ctx["scaler"].mean_[CLOSE_IDX])
-            std_close = float(ctx["scaler"].scale_[CLOSE_IDX])
-            y_pred_both_cal = y_pred_both.copy()
-            y_pred_both_cal[:, 1] = (y_pred_test_close_real_cal - mean_close) / std_close
+    y_true_train_close_real = inverse_transform_col(
+        ctx["y_train"][:, 1], CLOSE_IDX, ctx["scaler"]
+    )
+    y_pred_train_close_real = inverse_transform_col(
+        y_pred_train_both[:, 1], CLOSE_IDX, ctx["scaler"]
+    )
 
-    # ── Direction threshold tuning (train) for Close ──
-    if enable_close_calibration:
-        # Predict on train for threshold selection.
-        pred_train_out = model.predict(ctx["X_train"], verbose=0)
-        if isinstance(pred_train_out, (list, tuple)):
-            y_pred_train_both = np.hstack([pred_train_out[0], pred_train_out[1]])
-        else:
-            y_pred_train_both = pred_train_out
+    qs = np.linspace(0.05, 0.95, 19)
+    candidate_ts = np.quantile(y_pred_train_close_real, qs)
 
-        y_true_train_close_real = inverse_transform_col(
-            ctx["y_train"][:, 1], CLOSE_IDX, ctx["scaler"]
-        )
-        y_pred_train_close_real = inverse_transform_col(
-            y_pred_train_both[:, 1], CLOSE_IDX, ctx["scaler"]
-        )
+    best_t = 0.0
+    best_acc = -1.0
+    y_true_dir = (y_true_train_close_real > 0)
+    for t in candidate_ts:
+        acc = float(np.mean((y_pred_train_close_real > t) == y_true_dir))
+        if acc > best_acc:
+            best_acc = acc
+            best_t = float(t)
 
-        # Candidate thresholds from prediction distribution.
-        qs = np.linspace(0.05, 0.95, 19)
-        candidate_ts = np.quantile(y_pred_train_close_real, qs)
+    # Convert subtracting threshold in real space to scaled-space adjustment:
+    # scaled = (real - mean) / std  => scaled_adj = scaled - t/std
+    scale_std_close = float(ctx["scaler"].scale_[CLOSE_IDX])
+    y_pred_both_cal = y_pred_both_cal.copy()
+    y_pred_both_cal[:, 1] = y_pred_both_cal[:, 1] - (best_t / scale_std_close)
 
-        best_t = 0.0
-        best_acc = -1.0
-        y_true_dir = (y_true_train_close_real > 0)
-        for t in candidate_ts:
-            acc = float(np.mean((y_pred_train_close_real > t) == y_true_dir))
-            if acc > best_acc:
-                best_acc = acc
-                best_t = float(t)
-
-        # Convert subtracting threshold in real space to scaled-space adjustment:
-        # scaled = (real - mean) / std  => scaled_adj = scaled - t/std
-        scale_std_close = float(ctx["scaler"].scale_[CLOSE_IDX])
-        y_pred_both_cal = y_pred_both_cal.copy()
-        y_pred_both_cal[:, 1] = y_pred_both_cal[:, 1] - (best_t / scale_std_close)
-
-    # ── Fix 4: variance scaling sanity check (post-processing only) ──
-    if enable_close_calibration:
-        train_std_close = float(np.std(ctx["y_train"][:, 1]))
-        pred_std_close = float(np.std(y_pred_both_cal[:, 1]))
-        if pred_std_close > 0:
-            scale_close = train_std_close / pred_std_close
-            # Clamp to avoid exploding outputs if something goes wrong.
-            scale_close = float(np.clip(scale_close, 0.2, 5.0))
-            y_pred_both_cal[:, 1] = y_pred_both_cal[:, 1] * scale_close
+# ── Fix 4: variance scaling sanity check (post-processing only) ──
+if enable_close_calibration:
+    train_std_close = float(np.std(ctx["y_train"][:, 1]))
+    pred_std_close = float(np.std(y_pred_both_cal[:, 1]))
+    if pred_std_close > 0:
+        scale_close = train_std_close / pred_std_close
+        scale_close = float(np.clip(scale_close, 0.2, 5.0))
+        y_pred_both_cal[:, 1] = y_pred_both_cal[:, 1] * scale_close
 
 # (removed) automatic variance scaling for Close
 
@@ -454,47 +487,14 @@ with col2:
     st.write(f"**Direction:** {m_close['Directional Accuracy']:.2%}")
     st.write(f"**F1:** {m_close['F1 Score']:.4f}")
 
-    if show_debug:
-        # Diagnostics: check whether Close target construction/scaling
-        # could explain a near-random directional accuracy.
-        with st.expander("Diagnostics: Close target stats (Test)"):
-            y_close_scaled = ctx["y_test"][:, 1]
-            y_close_real = inverse_transform_col(y_close_scaled, CLOSE_IDX, ctx["scaler"])
-            st.write(f"CLOSE_IDX used for Close target: {CLOSE_IDX}")
-            st.write(
-                "Scaled Close target: mean/std (should be ~0/1 for StandardScaler): "
-                f"{float(np.mean(y_close_scaled)):.6f} / {float(np.std(y_close_scaled)):.6f}"
-            )
-            st.write(
-                "Scaler Close feature stats (mean/std): "
-                f"{float(ctx['scaler'].mean_[CLOSE_IDX]):.6f} / {float(ctx['scaler'].scale_[CLOSE_IDX]):.6f}"
-            )
-            st.write(
-                "Real (inverse) Close log-return stats: "
-                f"mean/std={float(np.mean(y_close_real)):.6f}/{float(np.std(y_close_real)):.6f}"
-            )
-            st.write(
-                "Positive ratio (y_true_close_real > 0): "
-                f"{float(np.mean(y_close_real > 0)):.2%}"
-            )
-
-            st.write(
-                "Predicted Close log-return stats (real): "
-                f"mean/std={float(np.mean(yp_close)):.6f}/{float(np.std(yp_close)):.6f}"
-            )
-            st.write(
-                "Positive ratio (y_pred_close_real > 0): "
-                f"{float(np.mean(yp_close > 0)):.2%}"
-            )
-            corr = float(np.corrcoef(y_close_real, yp_close)[0, 1])
-            st.write(f"Correlation (true vs predicted, Close): {corr:.4f}")
-
     if m_close["Directional Accuracy"] > 0.60:
         st.success(f"✓ {m_close['Directional Accuracy']:.2%} — beats 60% target")
     elif m_close["Directional Accuracy"] > 0.50:
         st.warning(f"⚠ {m_close['Directional Accuracy']:.2%} — beats random")
     else:
         st.error(f"✗ {m_close['Directional Accuracy']:.2%} — at or below random")
+
+
 
 # Full metrics tables
 with st.expander("Full Metrics Detail"):
@@ -679,9 +679,8 @@ st.caption(
 )
 
 comp_open, imp_open = baseline_comparison(yt_open, yp_open, "Open")
-comp_close, imp_close = baseline_comparison(yt_close, yp_close, "Close")
 
-col1, col2 = st.columns(2)
+col1 = st.columns(1)[0]
 with col1:
     st.write("**Open**")
     st.dataframe(comp_open, use_container_width=True)
@@ -690,41 +689,20 @@ with col1:
         delta = float(imp_open.get("direction_improvement", 0.0))
         delta_str = f"({delta:+.2f}pp Direction)"
         if delta > 0:
-            st.success(f"✓ {imp_open['verdict']} {delta_str}")
+            st.success(f"OK {imp_open['verdict']} {delta_str}")
         elif delta == 0:
-            st.warning(f"⚠ {imp_open['verdict']} {delta_str}")
+            st.warning(f"WARN {imp_open['verdict']} {delta_str}")
         else:
-            st.error(f"✗ {imp_open['verdict']} {delta_str}")
+            st.error(f"ERR {imp_open['verdict']} {delta_str}")
     else:
-        delta = float(imp_open["mse_improvement_pct"])
+        delta = float(imp_open["mse_improvement_pct"] )
         if delta > 10:
-            st.success(f"✓ {imp_open['verdict']} (+{delta:.1f}% MSE)")
+            st.success(f"OK {imp_open['verdict']} (+{delta:.1f}% MSE)")
         elif delta > 0:
-            st.warning(f"⚠ {imp_open['verdict']} (+{delta:.1f}% MSE)")
+            st.warning(f"WARN {imp_open['verdict']} (+{delta:.1f}% MSE)")
         else:
-            st.error(f"✗ {imp_open['verdict']} (+{delta:.1f}% MSE)")
+            st.error(f"ERR {imp_open['verdict']} (+{delta:.1f}% MSE)")
 
-with col2:
-    st.write("**Close**")
-    st.dataframe(comp_close, use_container_width=True)
-    is_dir_verdict = "direction" in str(imp_close.get("verdict", ""))
-    if is_dir_verdict:
-        delta = float(imp_close.get("direction_improvement", 0.0))
-        delta_str = f"({delta:+.2f}pp Direction)"
-        if delta > 0:
-            st.success(f"✓ {imp_close['verdict']} {delta_str}")
-        elif delta == 0:
-            st.warning(f"⚠ {imp_close['verdict']} {delta_str}")
-        else:
-            st.error(f"✗ {imp_close['verdict']} {delta_str}")
-    else:
-        delta = float(imp_close["mse_improvement_pct"])
-        if delta > 10:
-            st.success(f"✓ {imp_close['verdict']} (+{delta:.1f}% MSE)")
-        elif delta > 0:
-            st.warning(f"⚠ {imp_close['verdict']} (+{delta:.1f}% MSE)")
-        else:
-            st.error(f"✗ {imp_close['verdict']} (+{delta:.1f}% MSE)")
 
 # ── Statistical Significance ──────────────────────────────────
 st.subheader("📐 Statistical Significance (McNemar Test)")
@@ -768,10 +746,6 @@ st.info(
 )
 
 ablation_data = {
-    "LSTM — OHLC only (baseline)": {"direction": 0.4959, "mae": 0.796519},
-    "LSTM — OHLCV (+ Volume)": {"direction": 0.00, "mae": 0.00},
-    "LSTM — OHLCV + RSI": {"direction": 0.00, "mae": 0.00},
-    "LSTM — OHLCV + RSI + MACD": {"direction": 0.00, "mae": 0.00},
     "LSTM — OHLCV + RSI + MACD + BB (full)": {
         "direction": m_close["Directional Accuracy"],
         "mae": m_close["MAE"],
@@ -783,40 +757,25 @@ st.caption(
     "Fill in the empty rows by running the model "
     "with each configuration separately."
 )
-# ── Prediction Visualization ──────────────────────────────────
+# ── Prediction Visualization (Open only) ────────────────
 st.subheader("📈 Prediction Quality — Test Set")
 
-fig, axes = plt.subplots(2, 2, figsize=(14, 8))
+fig, axes = plt.subplots(1, 2, figsize=(14, 4))
 
 # Open: actual vs predicted
-axes[0, 0].plot(yt_open[:100], label="Actual", alpha=0.8)
-axes[0, 0].plot(yp_open[:100], label="Predicted", alpha=0.8)
-axes[0, 0].axhline(0, color="black", linestyle="--", alpha=0.3)
-axes[0, 0].set_title("Open Log Returns — Actual vs Predicted")
-axes[0, 0].legend()
-axes[0, 0].grid(True, alpha=0.3)
-
-# Close: actual vs predicted
-axes[0, 1].plot(yt_close[:100], label="Actual", alpha=0.8)
-axes[0, 1].plot(yp_close[:100], label="Predicted", alpha=0.8)
-axes[0, 1].axhline(0, color="black", linestyle="--", alpha=0.3)
-axes[0, 1].set_title("Close Log Returns — Actual vs Predicted")
-axes[0, 1].legend()
-axes[0, 1].grid(True, alpha=0.3)
+axes[0].plot(yt_open[:100], label="Actual", alpha=0.8)
+axes[0].plot(yp_open[:100], label="Predicted", alpha=0.8)
+axes[0].axhline(0, color="black", linestyle="--", alpha=0.3)
+axes[0].set_title("Open Log Returns — Actual vs Predicted")
+axes[0].legend()
+axes[0].grid(True, alpha=0.3)
 
 # Cumulative Open
-axes[1, 0].plot(np.cumsum(yt_open), label="Actual Cumulative", lw=2)
-axes[1, 0].plot(np.cumsum(yp_open), label="Predicted Cumulative", lw=2)
-axes[1, 0].set_title("Cumulative Open Returns")
-axes[1, 0].legend()
-axes[1, 0].grid(True, alpha=0.3)
-
-# Cumulative Close
-axes[1, 1].plot(np.cumsum(yt_close), label="Actual Cumulative", lw=2)
-axes[1, 1].plot(np.cumsum(yp_close), label="Predicted Cumulative", lw=2)
-axes[1, 1].set_title("Cumulative Close Returns")
-axes[1, 1].legend()
-axes[1, 1].grid(True, alpha=0.3)
+axes[1].plot(np.cumsum(yt_open), label="Actual Cumulative", lw=2)
+axes[1].plot(np.cumsum(yp_open), label="Predicted Cumulative", lw=2)
+axes[1].set_title("Cumulative Open Returns")
+axes[1].legend()
+axes[1].grid(True, alpha=0.3)
 
 plt.suptitle(f"{symbol} — LSTM+Indicators Prediction Quality", fontsize=13)
 plt.tight_layout()
@@ -828,7 +787,20 @@ st.pyplot(fig)
 st.header(f"Next {days_to_predict} Trading Days {symbol} price prediction")
 
 last_real_day = get_last_trading_day(data.index[-1])
-future_dates  = get_next_trading_days(last_real_day, days_to_predict)
+future_dates_all = get_next_trading_days(last_real_day, days_to_predict)
+
+import pandas as pd
+
+# Convert today to pandas Timestamp normalized to midnight (timezone-naive)
+today = pd.Timestamp.today().normalize()
+
+# Ensure future_dates are timezone naive for comparison
+if future_dates_all.tz is not None:
+    future_dates_all = future_dates_all.tz_localize(None)
+
+# Keep only dates from today onward, and reuse the same mask for prices
+date_mask = future_dates_all >= today
+future_dates = future_dates_all[date_mask]
 
 weekend_check = future_dates[future_dates.dayofweek >= 5]
 if len(weekend_check) > 0:
@@ -846,6 +818,11 @@ forecast = forecast_ohlcv(
     ctx["raw_ohlcv"]
 )
 
+forecast = {
+    key: (np.asarray(val)[date_mask] if isinstance(val, (list, np.ndarray)) else val)
+    for key, val in forecast.items()
+}
+
 informer_forecast = None
 if model_mode == "LSTM vs Informer (Close)":
     informer_forecast = forecast_ohlcv_informer(
@@ -856,58 +833,39 @@ if model_mode == "LSTM vs Informer (Close)":
         ctx["raw_ohlcv"],
     )
 
+    informer_forecast = {
+        key: (np.asarray(val)[date_mask] if isinstance(val, (list, np.ndarray)) else val)
+        for key, val in informer_forecast.items()
+    }
+
 # Forecast table
 st.subheader("Base Price Forecast (Price Patterns Only)")
 forecast_df = pd.DataFrame({
     "Date":            future_dates.strftime("%Y-%m-%d (%A)"),
     "Base Open":       forecast["open_prices"],
     "Base Close":      forecast["close_prices"],
-    **({
-        "Informer Close": informer_forecast["close_prices"],
-    } if informer_forecast is not None else {}),
-    "Daily Range $":   [round(abs(o - c), 4)
-                          for o, c in zip(
-                              forecast["open_prices"],
-                              forecast["close_prices"],
-                          )]
 })
 st.dataframe(forecast_df, use_container_width=True)
 
 # Forecast chart
 fig_fc, ax = plt.subplots(figsize=(13, 5))
 ax.plot(
-    data.index[-90:], data["Close"].values[-90:],
-    label="Historical Close", color="steelblue", lw=2
+    data.index[-90:], data["Open"].values[-90:],
+    label="Historical Open", color="steelblue", lw=2
 )
 ax.plot(
     future_dates, forecast["open_prices"],
     label="Predicted Open", color="orange",
     marker="^", lw=2, linestyle="--"
 )
-ax.plot(
-    future_dates, forecast["close_prices"],
-    label="Predicted Close", color="green",
-    marker="o", lw=2
-)
 
-if informer_forecast is not None:
-    ax.plot(
-        future_dates, informer_forecast["close_prices"],
-        label="Informer Predicted Close", color="purple",
-        marker="x", lw=2, linestyle=":"
-    )
-ax.fill_between(
-    future_dates,
-    forecast["open_prices"],
-    forecast["close_prices"],
-    alpha=0.15, color="gray", label="Open-Close range"
-)
+# Open-only chart: no Close lines/range shading.
 ax.axvline(
     x=last_real_day, color="red",
     linestyle="--", alpha=0.5, label="Forecast start"
 )
 ax.set_title(
-    f"{symbol} — AI Base Forecast (Open & Close)"
+    f"{symbol} - AI Base Forecast (Open only)"
 )
 ax.set_xlabel("Date")
 ax.set_ylabel("Price ($)")
