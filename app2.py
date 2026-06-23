@@ -603,6 +603,11 @@ if model_mode == "LSTM vs Informer (Close)":
         ctx["scaler"], CLOSE_IDX, "Close (Proposed w/o Informer)"
     )
 
+    m_open_inf, _, yt_open_inf, yp_open_inf = evaluate_predictions(
+        ctx["y_test"][:, 0], informer_y_pred_both[:, 0],
+        ctx["scaler"], OPEN_IDX, "Open (Informer)"
+    )
+
     m_close_inf, df_close_inf, yt_close_inf, yp_close_inf = evaluate_predictions(
         ctx["y_test"][:, 1], informer_y_pred_both[:, 1],
         ctx["scaler"], CLOSE_IDX, "Close (Informer)"
@@ -646,6 +651,29 @@ if model_mode == "LSTM vs Informer (Close)":
             df_close_inf[df_close_inf["Metric"].isin(keep_metrics)],
             use_container_width=True,
         )
+
+    if symbol == "TSLA":
+        st.subheader("📋 Tesla MAE Comparison")
+        tesla_mae_df = pd.DataFrame(
+            [
+                {
+                    "Model": "LSTM + Technical Indicators",
+                    "MAE Open": m_open["MAE"],
+                    "MAE Close": m_close["MAE"],
+                },
+                {
+                    "Model": "Informer + Technical Indicators",
+                    "MAE Open": m_open_inf["MAE"],
+                    "MAE Close": m_close_inf["MAE"],
+                },
+                {
+                    "Model": "Proposed (LSTM + Informer + Sentiment)",
+                    "MAE Open": m_open_prop["MAE"],
+                    "MAE Close": m_close_prop["MAE"],
+                },
+            ]
+        )
+        st.dataframe(tesla_mae_df, use_container_width=True)
 
     st.subheader("🚀 Proposed (LSTM + Informer + Sentiment, 1-day ahead)")
     st.caption(
