@@ -66,7 +66,7 @@ except Exception:
 
 st.title("Fused Market Predictor")
 st.caption(
-    "LSTM + FinBERT + RoBERTa | Features: OHLCV + RSI + MACD + Bollinger | Predicts: Open"
+    "LSTM + FinBERT + RoBERTa | Features: OHLCV + RSI + MACD + Bollinger | Predicts: Open + Close"
 )
 
 
@@ -248,7 +248,7 @@ except Exception as exc:
 
 model_status = "Loaded saved model" if was_loaded else "Model trained"
 st.success(
-    f"✓ {model_status} | Input: {N_FEATURES} features | Output: 1 (Open only)"
+    f"✓ {model_status} | Input: {N_FEATURES} features | Output: 2 (Open + Close)"
 )
 
 DECAY_RATE = 10.0
