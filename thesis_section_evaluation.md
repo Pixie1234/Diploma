@@ -129,6 +129,18 @@ Where:
 
 *Note: JNJ baseline performs poorly due to stable price behavior making directional prediction challenging. The addition of technical indicators and synthetic sentiment improves accuracy.*
 
+### Tesla (TSLA) MAE Comparison
+
+Available Tesla model artifacts in the current app were evaluated on both outputs:
+
+| Model | MAE Open | MAE Close |
+|-------|----------|-----------|
+| LSTM + Technical Indicators | 0.01600146 | 0.02649016 |
+| Informer + Technical Indicators | 0.01379807 | 0.02644139 |
+| Proposed (LSTM + Informer + Sentiment) | 0.01549795 | 0.02677189 |
+
+*Note: These values come from the current Tesla run in the Streamlit app and are reported for both Open and Close prediction targets.*
+
 ### Summary Table: 6 Stocks
 
 | Stock | LSTM+Tech | Proposed (Synthetic) | Improvement |
