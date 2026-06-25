@@ -877,12 +877,14 @@ st.dataframe(forecast_df, use_container_width=True)
 
 # Forecast chart
 fig_fc, ax = plt.subplots(figsize=(13, 5))
+forecast_x = np.concatenate(([data.index[-1]], future_dates))
+forecast_y = np.concatenate(([data["Open"].values[-1]], forecast["open_prices"]))
 ax.plot(
     data.index[-90:], data["Open"].values[-90:],
     label="Historical Open", color="steelblue", lw=2
 )
 ax.plot(
-    future_dates, forecast["open_prices"],
+    forecast_x, forecast_y,
     label="Predicted Open", color="orange",
     marker="^", lw=2, linestyle="--"
 )
