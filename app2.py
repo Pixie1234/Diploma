@@ -877,7 +877,9 @@ st.dataframe(forecast_df, use_container_width=True)
 
 # Forecast chart
 fig_fc, ax = plt.subplots(figsize=(13, 5))
-forecast_x = np.concatenate(([data.index[-1]], future_dates))
+future_dates_plot = [d.to_pydatetime() for d in future_dates]
+last_real_day_plot = last_real_day.to_pydatetime() if hasattr(last_real_day, "to_pydatetime") else last_real_day
+forecast_x = [data.index[-1].to_pydatetime()] + future_dates_plot
 forecast_y = np.concatenate(([data["Open"].values[-1]], forecast["open_prices"]))
 ax.plot(
     data.index[-90:], data["Open"].values[-90:],
@@ -891,7 +893,7 @@ ax.plot(
 
 # Open-only chart: no Close lines/range shading.
 ax.axvline(
-    x=last_real_day, color="red",
+    x=last_real_day_plot, color="red",
     linestyle="--", alpha=0.5, label="Forecast start"
 )
 ax.set_title(
