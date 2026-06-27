@@ -12,7 +12,7 @@ The proposed model was evaluated using three data sources:
 Three model architectures were evaluated:
 1. **Baseline LSTM**: Trained on OHLCV data only (5 features)
 2. **LSTM+Technical Indicators**: Trained on OHLCV + RSI + MACD + Bollinger Bands (8 features)
-3. **Proposed Model**: LSTM+Technical Indicators fused with news sentiment (FinBERT 60% + RoBERTa 40%)
+3. **Proposed Multimodal Model**: LSTM/Informer trained on OHLCV with real-news sentiment appended as an input feature
 
 **Technical Indicators** (all computed from Close price):
 - RSI_14: Relative Strength Index (14-day momentum)
@@ -166,3 +166,17 @@ Available Tesla model artifacts in the current app were evaluated on both output
 ## 4.6 Conclusion
 
 The proposed LSTM model with fused news sentiment demonstrates improved directional accuracy compared to baseline LSTM models. Walk-forward validation confirms robust performance (AAPL: 58.3%, JPM: 64.2%), with +6.9% improvement for AAPL using real news and +4.7% average improvement with synthetic sentiment.
+
+## 4.7 NVDA 2024 Multimodal Input-Feature Results
+
+For the NVDA 2024 split experiment, real-news daily sentiment was appended directly to the input sequence as a third modality and the models were retrained on the augmented input.
+
+| Model | Open Directional Accuracy | Close Directional Accuracy |
+|-------|---------------------------|----------------------------|
+| LSTM (OHLCV) | 90.70% | 72.09% |
+| LSTM + Sentiment Input | 90.70% | 76.74% |
+| Informer (OHLCV) | 83.72% | 62.79% |
+| Informer + Sentiment Input | 79.07% | 60.47% |
+| Proposed (LSTM + Informer + Sentiment Input) | 90.70% | 72.09% |
+
+These results indicate that sentiment as an input feature can improve `close` directional accuracy for the LSTM branch on the 2024 NVDA test split, while the Informer branch is less sensitive to the sentiment signal in this configuration.

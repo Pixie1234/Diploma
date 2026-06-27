@@ -39,6 +39,20 @@ Using price momentum as sentiment proxy:
 
 ---
 
+## 3. NVDA 2024 Multimodal Input-Feature Results
+
+Real-news daily sentiment was appended as an input feature to the model sequence.
+
+| Model | Open Directional Accuracy | Close Directional Accuracy |
+|-------|---------------------------|----------------------------|
+| LSTM (OHLCV) | 90.70% | 72.09% |
+| LSTM + Sentiment Input | 90.70% | 76.74% |
+| Informer (OHLCV) | 83.72% | 62.79% |
+| Informer + Sentiment Input | 79.07% | 60.47% |
+| Proposed (LSTM + Informer + Sentiment Input) | 90.70% | 72.09% |
+
+---
+
 ## Summary
 
 ### Real News (Finlight)
@@ -62,6 +76,7 @@ Using price momentum as sentiment proxy:
 - **News Source:** Finlight API (real financial news)
 - **Sentiment Model:** FinBERT (60%) + RoBERTa (40%) fusion
 - **Test Period:** 30 days
+- **Multimodal Variant:** daily sentiment appended directly as an input feature to the sequence model
 
 ## Key Findings
 
