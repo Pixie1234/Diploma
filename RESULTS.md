@@ -45,11 +45,11 @@ Real-news daily sentiment was appended as an input feature to the model sequence
 
 | Model | Open Directional Accuracy | Close Directional Accuracy |
 |-------|---------------------------|----------------------------|
-| LSTM (OHLCV) | 90.70% | 72.09% |
-| LSTM + Sentiment Input | 90.70% | 76.74% |
+| LSTM (OHLCV) | 83.72% | 72.09% |
+| LSTM + Sentiment Input | 83.72% | 72.09% |
 | Informer (OHLCV) | 83.72% | 62.79% |
 | Informer + Sentiment Input | 79.07% | 60.47% |
-| Proposed (LSTM + Informer + Sentiment Input) | 90.70% | 72.09% |
+| Proposed (LSTM + Informer + Sentiment Input) | 86.05% | 67.44% |
 
 ---
 

@@ -170,13 +170,14 @@ The proposed LSTM model with fused news sentiment demonstrates improved directio
 ## 4.7 NVDA 2024 Multimodal Input-Feature Results
 
 For the NVDA 2024 split experiment, real-news daily sentiment was appended directly to the input sequence as a third modality and the models were retrained on the augmented input.
+The scaler was fit only on the training window to avoid full-window leakage.
 
 | Model | Open Directional Accuracy | Close Directional Accuracy |
 |-------|---------------------------|----------------------------|
-| LSTM (OHLCV) | 90.70% | 72.09% |
-| LSTM + Sentiment Input | 90.70% | 76.74% |
+| LSTM (OHLCV) | 83.72% | 72.09% |
+| LSTM + Sentiment Input | 83.72% | 72.09% |
 | Informer (OHLCV) | 83.72% | 62.79% |
 | Informer + Sentiment Input | 79.07% | 60.47% |
-| Proposed (LSTM + Informer + Sentiment Input) | 90.70% | 72.09% |
+| Proposed (LSTM + Informer + Sentiment Input) | 86.05% | 67.44% |
 
-These results indicate that sentiment as an input feature can improve `close` directional accuracy for the LSTM branch on the 2024 NVDA test split, while the Informer branch is less sensitive to the sentiment signal in this configuration.
+These leakage-free results indicate that sentiment as an input feature is not consistently beneficial on this 2024 NVDA split; the LSTM branch is unchanged on directional accuracy, while the Informer branch remains less sensitive to the sentiment signal in this configuration.
